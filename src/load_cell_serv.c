@@ -44,12 +44,13 @@ static int pop_bit() {
    gpioWrite(PIN_SCK,1);
    gpioDelay(1);
    gpioWrite(PIN_SCK,0);
-   return gpioRead(PIN_DT);
+   int retval = gpioRead(PIN_DT);
+   return retval;
 }
 
 static long next_value(int new_gain) {
+   gpioWrite(PIN_SCK,0);
    while (gpioRead(PIN_DT)) {
-      //printf("waiting\n");
       gpioDelay(1);
    }
 
@@ -66,7 +67,7 @@ static long next_value(int new_gain) {
    for (int i = 0; i < new_gain; ++i)
       (void)pop_bit();
 
-   value ^= 0x800000;
+   //value ^= 0x800000;
    return value;
 }
 
@@ -137,7 +138,7 @@ help_message:
       exit(1);
    }
 
-   printf("got dest address as %s\n",argv[2]);
+   printf("got dest address as %s\n",argv[3]);
 
    /* initialize the library */
    if (gpioInitialise() < 0) {
@@ -179,6 +180,7 @@ help_message:
 
    struct timespec time;
 
+   long prev_raw = 0;
    /* main program loop */
    while (global) {
 

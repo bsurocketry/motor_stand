@@ -27,14 +27,14 @@ static void handler(int signum) {
 static void write_callback(output_data * data, void * uarg) {
    FILE * fhandle = (FILE *)uarg;
    char buf[128];
-   snprintf(buf,128,"%ld %ld %lf\n",data->collect_time,
+   snprintf(buf,128,"%ld\t%ld\t%lf\n",data->collect_time,
             data->raw_value, data->value);
    fwrite(buf,strlen(buf),sizeof(char),fhandle);
 }
 
 int main(int argc, char ** argv) {
 
-   if (argc != 2 || (argc >= 2 && strcmp("-h",argc[1]) == 0)) {
+   if (argc != 2 || (argc >= 2 && strcmp("-h",argv[1]) == 0)) {
       printf("usage:\n%s <fname>\n"
              "passing '-' as fname will print to stdout\n",
              argv[0]);
@@ -47,10 +47,10 @@ int main(int argc, char ** argv) {
 
    sigaction(SIGINT,&action,NULL);
 
-   if (strcmp("-",argv[2]) == 0)
+   if (strcmp("-",argv[1]) == 0)
       fhandle = stdout;
    else
-      fhandle = fopen(argv[2],"a");
+      fhandle = fopen(argv[1],"a");
 
    if (!fhandle) {
       printf("failed to open given file: %s\n",argv[2]);
@@ -63,7 +63,7 @@ int main(int argc, char ** argv) {
    fwrite(buf,strlen(buf),sizeof(char),fhandle);
 
    /* write out the header for the data */
-   snprintf(buf,128,"collect_time, raw_value, value\n");
+   snprintf(buf,128,"collect_time\traw_value\tvalue\n");
    fwrite(buf,strlen(buf),sizeof(char),fhandle);
    
    /* launch the cli handle */
