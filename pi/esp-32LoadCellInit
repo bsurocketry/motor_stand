@@ -1,0 +1,28 @@
+#include <Arduino.h>
+#include "HX711.h"
+
+const int LOADCELL_DOUT_PIN = 16;
+const int LOADCELL_SCK_PIN = 4;
+
+HX711 scale;
+
+void setup() {
+  Serial.begin(115200);
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  
+  scale.set_scale(1);  // Set scale factor to 1 to read raw values
+  scale.tare();        // Tare (zero) the scale with nothing on it
+
+  Serial.println("Scale initialized. Place known weight on scale.");
+}
+
+void loop() {
+  if (scale.is_ready()) {
+    long reading = scale.get_units(10);  // average 10 readings
+    Serial.print("Raw reading: ");
+    Serial.println(reading);
+  } else {
+    Serial.println("HX711 not found.");
+  }
+  delay(1000);
+}
