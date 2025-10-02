@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <time.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <pthread.h>
+#include <errno.h>
 
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -71,6 +74,103 @@ static long next_value(int new_gain) {
    return value;
 }
 
+
+#define CC_IS_BEST_GIRL 1
+
+static void * handle_auxillary_command(void * arg) {
+   pthread_detach(pthread_self());
+   struct auxillary_server_handler * handler = (struct auxillary_server_handler *)arg;
+
+   struct auxillary_server_msg msg = {.value = 0, .type = -1};
+   int res;
+
+   do {
+      res = read(handler->fd,&msg,sizeof(struct auxillary_server_msg));
+   } while (res == -1 && errno == EINTR);
+
+   switch (msg.type) {
+      case OP_RESET: {
+
+         int expected;
+         do { 
+            expected = atomic_load(handler->data.reset);
+         } while (!atomic_compare_exchange_strong(handler->data.reset,&expected,1));
+
+         }
+         break;
+      case OP_TARE:
+
+         atomic_store(handler->data.tare,msg.value);
+
+         break;
+      case OP_ACK:
+         break;
+
+      default:
+         /* do not respond at all */
+         goto finish;
+         break;
+   }
+
+   msg.type = OP_ACK;
+   do {
+      res = write(handler->fd,&msg,sizeof(struct auxillary_server_msg));
+   } while (res == -1 && errno == EINTR);
+
+finish:
+   {
+      close(handler->fd);
+      free(handler);
+      return NULL;
+   }
+}
+
+static void * run_auxillary_server(void * arg) {
+   pthread_detach(pthread_self());
+   struct auxillary_server_data * data = (struct auxillary_server_data *)arg;
+
+   int serv_port, cli_port;
+
+   struct sockaddr_in servaddr, cliaddr;
+   servaddr.sin_family = AF_INET;
+   servaddr.sin_port = AUX_PORT;
+   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+   serv_port = socket(AF_INET, SOCK_STREAM, 0);
+   if (serv_port == -1) {
+      printf("Internal error: failed to instantiate serv port\n");
+      return NULL;
+   }
+
+   if (bind(serv_port,(struct sockaddr *)&servaddr,sizeof(struct sockaddr_in)) == -1) {
+      printf("Internal error: failed to bind auxillary server\n");
+      return NULL;
+   }
+
+   if (listen(serv_port,5) == -1) {
+      printf("Internal error: failed to call listen on auxillary server\n");
+      return NULL;
+   }
+
+   printf("auxillary server started successfully\n");
+
+   while (CC_IS_BEST_GIRL) {
+      pthread_t tid;
+      socklen_t socklen = sizeof(struct sockaddr_in);
+
+      cli_port = accept(serv_port, (struct sockaddr *)&cliaddr, &socklen);
+
+      struct auxillary_server_handler * handler = malloc(sizeof(struct auxillary_server_handler));
+      memcpy(&handler->data,data,sizeof(struct auxillary_server_data));
+      handler->fd = cli_port;
+
+      pthread_create(&tid,NULL,handle_auxillary_command,handler);
+   }
+
+
+   return NULL;
+}
+
 int main(int argc, char ** argv) {
 
    if (argc != 4) {
@@ -109,6 +209,10 @@ help_message:
    }
 
    double known_weight, multiplier;
+   _Atomic(double) tare;
+   atomic_init(&tare,0.0);
+   atomic_int reset;
+   atomic_init(&reset,0);
    int calibrating = 0;
 
    if (strcmp("-c",argv[1]) == 0) {
@@ -174,6 +278,11 @@ help_message:
 
    sigaction(SIGINT,&action,NULL);
 
+   printf("launching auxillary server\n");
+   pthread_t tid;
+   struct auxillary_server_data data = { .tare = &tare, .reset = &reset };
+   pthread_create(&tid,NULL,run_auxillary_server,&data);
+
    printf("starting\n");
    reset_adc();
    printf("sending data...\n");
@@ -193,11 +302,22 @@ help_message:
       output_data o = {.collect_time_sec = time.tv_sec,
                        .collect_time_nsec = time.tv_nsec,
                        .collect_time = microseconds,
-                       .raw_value = next_raw, .value = next};
-
+                       .raw_value = next_raw, 
+                       .value = next,
+                       .value_tare = next - atomic_load(&tare)};
 
       sendto(sock,&o,sizeof(output_data),0,
              (struct sockaddr *)&dest_addr,sizeof(struct sockaddr_in));
+
+      if (atomic_load(&reset)) {
+
+         int expected;
+         do { 
+            expected = atomic_load(&reset);
+         } while (!atomic_compare_exchange_strong(&reset,&expected,0));
+
+         reset_adc();
+      }
    }
 
    printf("finishing\n");
