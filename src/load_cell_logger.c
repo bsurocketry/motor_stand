@@ -27,8 +27,8 @@ static void handler(int signum) {
 static void write_callback(output_data * data, void * uarg) {
    FILE * fhandle = (FILE *)uarg;
    char buf[128];
-   snprintf(buf,128,"%ld\t%ld\t%lf\n",data->collect_time,
-            data->raw_value, data->value);
+   snprintf(buf,128,"%ld\t%ld\t%lf\t%lf\n",data->collect_time,
+            data->raw_value, data->value, data->value_tare);
    fwrite(buf,strlen(buf),sizeof(char),fhandle);
 }
 

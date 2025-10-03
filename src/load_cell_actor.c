@@ -58,6 +58,7 @@ static void get_server_address(struct sockaddr_in * servaddr) {
    if (bind(sock,(struct sockaddr *)&cli_addr,
                sizeof(struct sockaddr_in)) == -1) {
       printf("failed to bind socket to address - internal error\n");
+      perror("bind");
       return;
    }
 
@@ -75,6 +76,7 @@ static int send_server_message(auxillary_op_type op, double value) {
    get_server_address(&out_addr);
 
    struct auxillary_server_msg msg;
+   bzero(&msg,sizeof(struct auxillary_server_msg));
    msg.value = value;
    msg.type = op;
 
@@ -86,16 +88,18 @@ static int send_server_message(auxillary_op_type op, double value) {
 
    struct sockaddr_in addr;
    addr.sin_family = AF_INET;
-   addr.sin_port = AUX_PORT;
+   addr.sin_port = 0;
    addr.sin_addr.s_addr = htonl(INADDR_ANY);
    if (bind(sock,(struct sockaddr *)&addr,sizeof(struct sockaddr_in)) == -1) {
       printf("failed to bind socket to address - internal error\n");
       close(sock);
+      perror("bind");
       return 0;
    }
 
-   if (connect(sock,(struct sockaddr *)&addr,sizeof(struct sockaddr_in)) == -1) {
+   if (connect(sock,(struct sockaddr *)&out_addr,sizeof(struct sockaddr_in)) == -1) {
       printf("failed to connect socket to remote host - internal error\n");
+      perror("connect");
       close(sock);
       return 0;
    }

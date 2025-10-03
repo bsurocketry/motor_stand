@@ -65,6 +65,8 @@ static void * load_cell_cli_thread_wrapper(void * arg) {
                                (struct load_cell_cli_thread_data *)arg;
 
    run_load_cell_cli_worker(info->callback,info->uarg);
+
+   return NULL;
 }
 
 pthread_t run_load_cell_cli(void (* callback)(output_data *, void * uarg),
@@ -74,12 +76,13 @@ pthread_t run_load_cell_cli(void (* callback)(output_data *, void * uarg),
       case LC_CLI_DETACH: {
 
             pthread_t thread_id;
-            struct load_cell_cli_thread_data thread_bootstrap_data;
-            thread_bootstrap_data.callback = callback;
-            thread_bootstrap_data.uarg     = uarg;
+            struct load_cell_cli_thread_data * thread_bootstrap_data 
+               = malloc(sizeof(struct load_cell_cli_thread_data));
+            thread_bootstrap_data->callback = callback;
+            thread_bootstrap_data->uarg     = uarg;
 
             if (pthread_create(&thread_id,NULL,load_cell_cli_thread_wrapper,
-                               (void *)&thread_bootstrap_data)) {
+                               (void *)thread_bootstrap_data)) {
                printf("failed to spawn new thread - internal error\n");
                return RUN_FAILURE;
             }
