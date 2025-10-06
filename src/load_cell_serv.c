@@ -180,8 +180,12 @@ help_message:
              "\t-c : calibrate the sensor, value passed is the known weight to use for calibration\n"
              "\t-k : the multiplier is known, the value passed is the multiplier for the sensor\n"
              "arguments:\n"
-             "\tknown_weight/multiplier : the value to either use as the known weight to calibrate from or\n"
-             "\t                          as the multiplier generated from a previous calibration.\n"
+             "\tknown_weight/multiplier : a list of values. If the c option is pased these values will be used\n"
+             "                            to perform a first order least squares calibration. The values should\n"
+             "                            be passed as a comma seperated list in quotes, i.e. \"1,2,3,4,5\"\n"
+             "                            If the k option is passed these values will be used as the first and\n"
+             "                            zeroth term in the least squares fit, i.e. in the equation mx + b the\n"
+             "                            values should be passed in the form \"m,b\".\n"
              "\tdest address            : the address to send UDP data packets to. The output socket is set\n"
              "\t                          to enable broadcast, so you may pass a broadcast address as well\n",
              argv[0]);
@@ -208,21 +212,49 @@ help_message:
       }
    }
 
-   double known_weight, multiplier;
+   double * known_weights, multiplier_b, multiplier_m;
    _Atomic(double) tare;
    atomic_init(&tare,0.0);
    atomic_int reset;
    atomic_init(&reset,0);
-   int calibrating = 0;
+   int calibrating = 0, value_count;
 
    if (strcmp("-c",argv[1]) == 0) {
       calibrating = 1;
-      known_weight = strtod(argv[2],NULL);
-      printf("got known weight as %lf\n",known_weight);
+
+      char * pos = argv[2];
+      int value_count = 0;
+      known_weights = malloc(sizeof(double) * 2);
+
+      do {
+
+         /* simply double the array at every power of two, do
+          * not keep track of the current size of the array.
+          * This works because we are only growing, we don't
+          * need to worry about seeing the same power of two
+          * twice.                                           */
+
+         if (__builtin_popcount(value_count) == 1)
+            known_weights = realloc(known_weights,value_count * 2);
+
+         known_weights[value_count] = strtod(pos + 1,&pos);
+         value_count += 1;
+
+      } while (pos[0] == ',');
+
+      printf("got known weights as");
+      for (int i = 0; i < value_count; ++i)
+         printf(" %lf",known_weights[i]);
+      printf("\n");
    }
    else if (strcmp("-k",argv[1]) == 0) {
-      multiplier = strtod(argv[2],NULL);
-      printf("got multiplier as %lf\n",multiplier);
+      multiplier_m = strtod(argv[2],&argv[2]);
+      if (argv[2][0] != ',') {
+         printf("Expected values in form \"m,b\" for option -k\n");
+         exit(1);
+      }
+      multiplier_b = strtod(argv[2] + 1,NULL);
+      printf("got multiplier as %lf * x + %lf\n",multiplier_m,multiplier_b);
    }
    else if (strcmp("-h",argv[1]) == 0) {
       goto help_message;
@@ -261,19 +293,34 @@ help_message:
    }
 
    if (calibrating) {
+
+      double * timestep = malloc(sizeof(double)*value_count);
+      double * measurement = malloc(sizeof(double)*value_count);
+
+      for (int i = 0; i < value_count; ++i) {
    
-      printf("place known weight on scale and press any key\n");
-      (void)getc(stdin);
+         printf("place known weight %lf on scale and press any key\n",known_weights[i]);
+         (void)getc(stdin);
 
-      reset_adc();
-      long value_raw = next_value(GAIN_128);
+         reset_adc();
+         long value_raw = next_value(GAIN_128);
 
-      // 0xffffff is max buffer value
-      double value = (double)((double)value_raw / (double)0xffffff);
-      multiplier = known_weight / value;
+         // 0xffffff is max buffer value
+         // double value = (double)((double)value_raw / (double)0xffffff);
 
-      printf("got multiplier as %lf\n",multiplier);
-      printf("you can save this value for reuse without calibrating via the -k option\n");
+         timestep[i] = (double)value_raw;
+         measurement[i] = known_weights[i];
+
+      }
+
+      first_order_least_squares_filter(timestep,measurement,value_count,
+                                       &multiplier_m,&multiplier_b);
+
+      printf("got multiplier as %lf * x + %lf\n--> m = %lf\n--> b = %lf",
+             multiplier_m,multiplier_b,mutliplier_m,multiplier_b);
+      printf("you can save these value for reuse without calibrating via the -k option and by passing them as \"m,b\"\n");
+
+
    }
 
    sigaction(SIGINT,&action,NULL);
@@ -294,7 +341,7 @@ help_message:
    while (global) {
 
       long next_raw = next_value(GAIN_128);
-      double next = (double)((double)next_raw / (double)0xffffff) * multiplier;
+      double next = (double)((double)next_raw / (double)0xffffff) * multiplier_m + multiplier_b;
       clock_gettime(CLOCK_MONOTONIC,&time);
       //clock_gettime(CLOCK_MONOTONIC_COARSE,&time);
       long microseconds = (time.tv_sec * 1000000) + (time.tv_nsec / 1000);
