@@ -212,8 +212,11 @@ static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data
         }
 
         cairo_set_source_rgba(cr, trace->color.red, trace->color.green, trace->color.blue, trace->color.alpha);
-        cairo_set_line_width(cr, 1.5);
+        const double line_radius = 1.0;
+        const double point_radius = 4.0;
+
         gboolean first_point = TRUE;
+        double prev_x, prev_y;
 
         for (GList *l = trace->data; l != NULL; l = l->next) {
             DataPoint *p = (DataPoint *)l->data;
@@ -221,18 +224,27 @@ static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data
             double screen_x = margin_left + (p->x_time * scale_x);
             double screen_y = margin_top + graph_height - (p->y_value * scale_y);
             
-            if (first_point) {
-                cairo_move_to(cr, screen_x, screen_y);
-                first_point = FALSE;
-            } else {
+            if (!first_point) {
+                cairo_move_to(cr, prev_x, prev_y);
                 cairo_line_to(cr, screen_x, screen_y);
-            }
-            
-            cairo_arc(cr, screen_x, screen_y, 2.0, 0, 2 * M_PI);
-            cairo_fill(cr);
-            cairo_move_to(cr, screen_x, screen_y);
+                cairo_set_line_width(cr, 2 * line_radius);
+                cairo_stroke(cr);
+            } 
+
+            prev_x = screen_x;
+            prev_y = screen_y;
+            first_point = FALSE; 
         }
-        cairo_stroke(cr);
+        
+        for (GList *l = trace->data; l != NULL; l = l->next) {
+            DataPoint *p = (DataPoint *)l->data;
+
+            double screen_x = margin_left + (p->x_time * scale_x);
+            double screen_y = margin_top + graph_height - (p->y_value * scale_y);
+
+            cairo_arc(cr, screen_x, screen_y, 3.0, 0, 2 * M_PI); 
+            cairo_fill(cr); 
+        }
     }
 
     return FALSE;
@@ -422,4 +434,4 @@ int main (int argc, char **argv) {
 
     return status;
 }
-//gcc -o test test_stand_ui.c $(pkg-config --cflags --libs gtk+-3.0)
+//gcc -o test teststandui.c $(pkg-config --cflags --libs gtk+-3.0)
