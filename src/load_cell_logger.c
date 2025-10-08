@@ -63,7 +63,7 @@ int main(int argc, char ** argv) {
    fwrite(buf,strlen(buf),sizeof(char),fhandle);
 
    /* write out the header for the data */
-   snprintf(buf,128,"collect_time\traw_value\tvalue\n");
+   snprintf(buf,128,"collect_time\traw_value\tvalue\ttare_value\n");
    fwrite(buf,strlen(buf),sizeof(char),fhandle);
    
    /* launch the cli handle */

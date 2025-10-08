@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h> 
+#include "load_cell_cli.h"
 
 #define PRIMARY_TRACE_COUNT 1
 #define TOTAL_TRACE_COUNT PRIMARY_TRACE_COUNT
@@ -86,18 +87,21 @@ static void log_new_data(GraphData *gd, double primary_val) {
 
 
 // timer and random data generation
-static gboolean on_tick_timer(gpointer user_data) {
+static void on_tick_timer(output_data * data, gpointer user_data) {
     GraphData *gd = (GraphData *)user_data;
     if (!gd->is_recording) {
-        return G_SOURCE_CONTINUE; 
+       return;
+        //return G_SOURCE_CONTINUE; 
     }
     
 
-    double primary_val = (double)(rand() % 1000) / 10.0; 
+    //double primary_val = (double)(rand() % 1000) / 10.0; 
+    double primary_val = data->value_tare;
 
     log_new_data(gd, primary_val);
 
-    return G_SOURCE_CONTINUE; 
+    //return G_SOURCE_CONTINUE; 
+    return;
 }
 
 static void trace_toggle_cb(GtkToggleButton *button, gpointer user_data) {
@@ -191,8 +195,8 @@ static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data
         cairo_line_to(cr, margin_left, y_pos);
         cairo_stroke(cr);
 
-        char label[10];
-        snprintf(label, 10, "%d", i);
+        char label[11];
+        snprintf(label, 11, "%d", i);
         cairo_move_to(cr, margin_left - 30, y_pos + 4);
         cairo_show_text(cr, label);
     }
@@ -412,8 +416,9 @@ static void activate (GtkApplication* app, gpointer user_data) {
     g_object_unref(css_provider);
 
 
-    g_timer_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 100, on_tick_timer, &g_graph_data, NULL);
+    //g_timer_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 100, on_tick_timer, &g_graph_data, NULL);
 
+    run_load_cell_cli(on_tick_timer,(void *)&g_graph_data,LC_CLI_DETACH);
     
     gtk_widget_show_all(window);
 }
