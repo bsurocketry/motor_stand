@@ -40,10 +40,13 @@ typedef struct {
     double max_x;
     double max_y;
     gboolean is_recording;
+    gboolean has_data_input;
+    gboolean test_mode;
+    guint test_timer_id;
 } GraphData;
 
 static GraphData g_graph_data = {0};
-static guint g_timer_source_id = 0;
+static guint g_timer_source_id = 0; /* used for network client if needed (kept 0) */
 static gdouble g_current_time = 0.0;
 static const GdkRGBA g_colors[] = {
     {1.0, 0.0, 0.0, 1.0} 
@@ -87,21 +90,32 @@ static void log_new_data(GraphData *gd, double primary_val) {
 
 
 // timer and random data generation
+/*
+ * on_tick_timer: callback used by the network client when packets arrive.
+ * Signature matches run_load_cell_cli callback: void (*)(output_data *, void *)
+ */
 static void on_tick_timer(output_data * data, gpointer user_data) {
     GraphData *gd = (GraphData *)user_data;
     if (!gd->is_recording) {
-       return;
-        //return G_SOURCE_CONTINUE; 
+        return;
     }
-    
 
-    //double primary_val = (double)(rand() % 1000) / 10.0; 
-    double primary_val = data->value_tare;
-
+    /* Use the network-provided data when used as a client callback */
+    double primary_val = data ? data->value_tare : (double)(rand() % 1000) / 10.0;
+    if (data) {
+        gd->has_data_input = TRUE;
+    }
     log_new_data(gd, primary_val);
+}
 
-    //return G_SOURCE_CONTINUE; 
-    return;
+/* ui_timer_cb: GSourceFunc-compatible timer used for UI-only random data generation */
+static gboolean ui_timer_cb(gpointer user_data) {
+    GraphData *gd = (GraphData *)user_data;
+    if (!gd->is_recording) return TRUE; /* keep the timer running */
+
+    double primary_val = (double)(rand() % 1000) / 10.0;
+    log_new_data(gd, primary_val);
+    return TRUE; /* continue calling */
 }
 
 static void trace_toggle_cb(GtkToggleButton *button, gpointer user_data) {
@@ -110,8 +124,16 @@ static void trace_toggle_cb(GtkToggleButton *button, gpointer user_data) {
     gtk_widget_queue_draw(g_graph_data.drawing_area); 
 }
 
+static void on_test_toggled(GtkToggleButton *button, gpointer user_data);
+
 static void on_start_stop_clicked(GtkButton *button, gpointer user_data) {
     GraphData *gd = (GraphData *)user_data;
+    /* Only toggle recording if there is a data source (network or test) */
+    if (!gd->has_data_input && !gd->test_mode) {
+        gtk_statusbar_push(GTK_STATUSBAR(gd->status_bar), 0, "No data source available. Click Test to simulate data.");
+        return;
+    }
+
     gd->is_recording = !gd->is_recording;
     
     if (gd->is_recording) {
@@ -120,6 +142,35 @@ static void on_start_stop_clicked(GtkButton *button, gpointer user_data) {
     } else {
         gtk_button_set_label(button, "Start Recording");
         gtk_statusbar_push(GTK_STATUSBAR(gd->status_bar), 0, "Recording Paused. Click Reset to clear data.");
+    }
+}
+
+static gboolean test_timer_cb(gpointer user_data) {
+    GraphData *gd = (GraphData *)user_data;
+    if (!gd->is_recording) return TRUE;
+    double primary_val = (double)(rand() % 1000) / 10.0;
+    log_new_data(gd, primary_val);
+    return TRUE;
+}
+
+static void on_test_toggled(GtkToggleButton *button, gpointer user_data) {
+    GraphData *gd = (GraphData *)user_data;
+    gboolean active = gtk_toggle_button_get_active(button);
+
+    if (active) {
+        gd->test_mode = TRUE;
+        gd->has_data_input = TRUE; /* simulate data source present */
+        /* start test timer */
+        gd->test_timer_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 100, test_timer_cb, gd, NULL);
+        gtk_statusbar_push(GTK_STATUSBAR(gd->status_bar), 0, "Test mode: generating simulated data.");
+    } else {
+        gd->test_mode = FALSE;
+        gd->has_data_input = FALSE;
+        if (gd->test_timer_id) {
+            g_source_remove(gd->test_timer_id);
+            gd->test_timer_id = 0;
+        }
+        gtk_statusbar_push(GTK_STATUSBAR(gd->status_bar), 0, "Test mode stopped.");
     }
 }
 
@@ -349,7 +400,7 @@ static void activate (GtkApplication* app, gpointer user_data) {
     snprintf(g_graph_data.traces[0].css_class, 16, "trace-1");
     g_graph_data.traces[0].visible = TRUE;
 
-    g_graph_data.is_recording = TRUE; 
+    g_graph_data.is_recording = FALSE; 
 
     window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Interactive Logger");
@@ -378,6 +429,10 @@ static void activate (GtkApplication* app, gpointer user_data) {
     g_signal_connect(reset_button, "clicked", G_CALLBACK(on_reset_clicked), &g_graph_data);
     gtk_box_pack_start(GTK_BOX(hbox_controls_graph), reset_button, FALSE, FALSE, 0);
 
+    GtkWidget *test_toggle = gtk_check_button_new_with_label("Test Mode");
+    g_signal_connect(test_toggle, "toggled", G_CALLBACK(on_test_toggled), &g_graph_data);
+    gtk_box_pack_start(GTK_BOX(hbox_controls_graph), test_toggle, FALSE, FALSE, 0);
+
     for (int i = 0; i < TOTAL_TRACE_COUNT; i++) {
         TraceData *trace = &g_graph_data.traces[i];
         GtkWidget *check = gtk_check_button_new_with_label(trace->name);
@@ -403,7 +458,7 @@ static void activate (GtkApplication* app, gpointer user_data) {
     gtk_box_pack_start(GTK_BOX(main_vbox), g_graph_data.status_bar, FALSE, FALSE, 0);
 
     guint context_id = gtk_statusbar_get_context_id(GTK_STATUSBAR(g_graph_data.status_bar), "status");
-    gtk_statusbar_push(GTK_STATUSBAR(g_graph_data.status_bar), context_id, "Recording data...");
+    gtk_statusbar_push(GTK_STATUSBAR(g_graph_data.status_bar), context_id, "Idle. Click Start Recording to begin or enable Test Mode to simulate data.");
 
     gchar *css_data = g_strdup_printf(
         ".trace-1 label { color: rgb(255, 0, 0); }"
@@ -416,9 +471,18 @@ static void activate (GtkApplication* app, gpointer user_data) {
     g_object_unref(css_provider);
 
 
-    //g_timer_source_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 100, on_tick_timer, &g_graph_data, NULL);
-
-    run_load_cell_cli(on_tick_timer,(void *)&g_graph_data,LC_CLI_DETACH);
+    /* Try to start the network client; if it fails (returns RUN_FAILURE / (pthread_t)-1)
+     * fall back to the UI timer which generates simulated data. This makes the
+     * network-based data collection the default behavior when available.
+     */
+    pthread_t cli_thread = run_load_cell_cli(on_tick_timer, (void *)&g_graph_data, LC_CLI_DETACH);
+    if (cli_thread == (pthread_t)-1) {
+        /* network client didn't start — remain idle. Use Test Mode to simulate data when desired. */
+        g_timer_source_id = 0;
+    } else {
+        /* client is running in a background thread; no UI timer used */
+        g_timer_source_id = 0;
+    }
     
     gtk_widget_show_all(window);
 }

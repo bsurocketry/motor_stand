@@ -4,7 +4,7 @@
  */
 
 #include <signal.h>
-#include <pigpio.h>
+#include "gpio_compat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>

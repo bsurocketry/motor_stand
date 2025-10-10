@@ -38,6 +38,17 @@ all programs from source code.
 ./build.sh
 ```
 
+Alternatively, you can use CMake which works on Linux and Windows (MSYS2/MinGW):
+
+```
+cmake -S . -B build
+cmake --build build --config Release
+```
+
+Notes:
+- On Raspberry Pi / Linux the pigpio library and librt are used by the server; install pigpio before building (see above).
+- On Windows/MSYS2 the pigpio and librt libraries are usually not available; the build script will still compile the non-hardware parts. For the GUI build install GTK3 (via MSYS2 pacman) and use CMake.
+
 ### Usage
 
 This code is written as a client-server system. The server will
