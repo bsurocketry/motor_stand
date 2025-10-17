@@ -7,7 +7,7 @@
 #include "load_cell_cli.h"
 
 #define PRIMARY_TRACE_COUNT 1
-#define TOTAL_TRACE_COUNT PRIMARY_TRACE_COUNT
+#define TOTAL_TRACE_COUNT 1
 #define DATA_POINTS_TO_KEEP 500
 #define M_PI 3.14159265358979323846 
 
@@ -49,7 +49,8 @@ static GraphData g_graph_data = {0};
 static guint g_timer_source_id = 0; /* used for network client if needed (kept 0) */
 static gdouble g_current_time = 0.0;
 static const GdkRGBA g_colors[] = {
-    {1.0, 0.0, 0.0, 1.0} 
+    {1.0, 0.0, 0.0, 1.0},
+    {0.0, 0.0, 1.0, 1.0}
 };
 
 static void on_start_stop_clicked(GtkButton *button, gpointer user_data);
@@ -59,11 +60,11 @@ static void log_new_data(GraphData *gd, double primary_val);
 static void update_table(GraphData *gd, double time, double primary_val) {
     GtkTreeIter iter;
     gtk_list_store_append(gd->list_store, &iter);
-    
     gtk_list_store_set(gd->list_store, &iter, COL_TIME, time, COL_PRIMARY, primary_val, -1);
 }
 
 static void log_new_data(GraphData *gd, double primary_val) {
+    
 
     g_current_time += 0.1; 
     
@@ -83,7 +84,17 @@ static void log_new_data(GraphData *gd, double primary_val) {
     update_table(gd, g_current_time, primary_val);
 
     gd->max_x = g_current_time;
-    gd->max_y = 150.0; 
+
+    /* recompute max_y dynamically from both traces (find peak and add 10% headroom) */
+    double maxy = 0.0;
+    for (int ti = 0; ti < TOTAL_TRACE_COUNT; ++ti) {
+        for (GList *l = gd->traces[ti].data; l != NULL; l = l->next) {
+            DataPoint *p = (DataPoint *)l->data;
+            if (p->y_value > maxy) maxy = p->y_value;
+        }
+    }
+    if (maxy <= 0.0) maxy = 1.0;
+    gd->max_y = maxy * 1.1; /* 10% headroom */
 
     gtk_widget_queue_draw(gd->drawing_area);
 }
@@ -94,23 +105,46 @@ static void log_new_data(GraphData *gd, double primary_val) {
  * on_tick_timer: callback used by the network client when packets arrive.
  * Signature matches run_load_cell_cli callback: void (*)(output_data *, void *)
  */
-static void on_tick_timer(output_data * data, gpointer user_data) {
-    GraphData *gd = (GraphData *)user_data;
-    if (!gd->is_recording) {
-        return;
-    }
+/* Idle marshaling structure for passing data from worker threads to main loop */
+typedef struct {
+    output_data data;
+    GraphData *gd;
+} IdleOutput;
 
-    /* Use the network-provided data when used as a client callback */
-    double primary_val = data ? data->value_tare : (double)(rand() % 1000) / 10.0;
-    if (data) {
-        gd->has_data_input = TRUE;
+static gboolean idle_handle_output(gpointer user_data) {
+    IdleOutput *io = (IdleOutput *)user_data;
+    if (io && io->gd) {
+        io->gd->has_data_input = TRUE;
+        /* only log when recording is active */
+        if (io->gd->is_recording) {
+            log_new_data(io->gd, io->data.value_tare);
+        }
     }
-    log_new_data(gd, primary_val);
+    free(io);
+    return G_SOURCE_REMOVE;
+}
+
+/* Network callback — invoked in worker thread: marshal to main loop */
+static void on_tick_timer(output_data * data, gpointer user_data) {
+    if (!data || !user_data) return;
+    GraphData *gd = (GraphData *)user_data;
+    /* if UI not ready yet, ignore incoming ticks */
+    if (!gd || !gd->drawing_area || !gd->list_store) return;
+
+    IdleOutput *io = malloc(sizeof(IdleOutput));
+    if (!io) return;
+    io->data = *data; /* copy */
+    io->gd = gd;
+
+    /* schedule on main loop to safely update GTK widgets */
+    g_idle_add(idle_handle_output, io);
 }
 
 /* ui_timer_cb: GSourceFunc-compatible timer used for UI-only random data generation */
 static gboolean ui_timer_cb(gpointer user_data) {
+    if (!user_data) return TRUE;
     GraphData *gd = (GraphData *)user_data;
+    if (!gd || !gd->drawing_area || !gd->list_store) return TRUE;
     if (!gd->is_recording) return TRUE; /* keep the timer running */
 
     double primary_val = (double)(rand() % 1000) / 10.0;
@@ -146,7 +180,9 @@ static void on_start_stop_clicked(GtkButton *button, gpointer user_data) {
 }
 
 static gboolean test_timer_cb(gpointer user_data) {
+    if (!user_data) return TRUE;
     GraphData *gd = (GraphData *)user_data;
+    if (!gd || !gd->drawing_area || !gd->list_store) return TRUE;
     if (!gd->is_recording) return TRUE;
     double primary_val = (double)(rand() % 1000) / 10.0;
     log_new_data(gd, primary_val);
@@ -223,6 +259,59 @@ static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data
     double scale_x = gd->max_x > 0 ? (double)graph_width / gd->max_x : 0.0;
     double scale_y = gd->max_y > 0 ? (double)graph_height / gd->max_y : 0.0;
 
+    /* 1. Draw Grid Lines */
+    
+    // Set a lighter color and dashed line style for the grid
+    cairo_set_source_rgba(cr, 0.7, 0.7, 0.7, 1.0); // Light gray for grid
+    cairo_set_line_width(cr, 0.5);
+    double dashes[] = {2.0, 2.0};
+    cairo_set_dash(cr, dashes, 2, 0);
+
+    // Horizontal Grid Lines (aligned with Y-axis ticks)
+    int y_ticks = 5;
+    for (int i = 0; i <= y_ticks; ++i) {
+        double y_pos = margin_top + graph_height - (double)graph_height * i / y_ticks;
+        
+        cairo_move_to(cr, margin_left, y_pos);
+        cairo_line_to(cr, margin_left + graph_width, y_pos);
+        cairo_stroke(cr);
+    }
+
+    // Vertical Grid Lines (aligned with Time-axis ticks)
+    int x_ticks = 4; // 25%, 50%, 75%, 100% (already defined in your label loop)
+    for (int q = 1; q <= x_ticks; ++q) { // Start at 1 to skip the Y-axis (q=0)
+        double x_pos = margin_left + (double)graph_width * q / x_ticks;
+
+        cairo_move_to(cr, x_pos, margin_top);
+        cairo_line_to(cr, x_pos, margin_top + graph_height);
+        cairo_stroke(cr);
+    }
+
+    /* 2. Draw Zero-Level Line (Solid and Darker) */
+
+    // Reset line style to solid
+    cairo_set_dash(cr, NULL, 0, 0); 
+    
+    // Check if 0 is within the visible Y-range (0 to max_y)
+    if (gd->max_y > 0) {
+        // Calculate the screen Y position for a data value of 0.0
+        double y_pos_zero = margin_top + graph_height - (0.0 * scale_y);
+
+        // Set line style for the bolded zero line
+        cairo_set_source_rgb(cr, 0.3, 0.3, 0.3); // Darker gray
+        cairo_set_line_width(cr, 2.0); // Thicker line
+
+        // Draw the line across the graph area
+        cairo_move_to(cr, margin_left, y_pos_zero);
+        cairo_line_to(cr, margin_left + graph_width, y_pos_zero);
+        cairo_stroke(cr);
+    }
+
+    // Reset color to black for axes and labels
+    cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+    // Reset line width for axes
+    cairo_set_line_width(cr, 1.0);
+
     cairo_set_line_width(cr, 1.0);
     cairo_move_to(cr, margin_left, margin_top + graph_height);
     cairo_line_to(cr, margin_left + graph_width, margin_top + graph_height); 
@@ -239,26 +328,42 @@ static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data
     cairo_show_text(cr, "Value");
     cairo_restore(cr);
 
-    for (int i = 0; i <= (int)gd->max_y; i += 50) {
-        double y_pos = margin_top + graph_height - (double)i * scale_y;
-        
+    /* Y axis ticks: 5 ticks including 0 and max_y */
+    for (int i = 0; i <= y_ticks; ++i) {
+        double val = (gd->max_y * i) / (double)y_ticks;
+        double y_pos = margin_top + graph_height - val * scale_y;
+
         cairo_move_to(cr, margin_left - 5, y_pos);
         cairo_line_to(cr, margin_left, y_pos);
         cairo_stroke(cr);
 
-        char label[11];
-        snprintf(label, 11, "%d", i);
-        cairo_move_to(cr, margin_left - 30, y_pos + 4);
+        char label[32];
+        snprintf(label, sizeof(label), "%.1f", val);
+        cairo_move_to(cr, margin_left - 40, y_pos + 4);
         cairo_show_text(cr, label);
     }
     
+    /* Time axis label */
     cairo_move_to(cr, margin_left + graph_width / 2 - 30, height - 5);
     cairo_show_text(cr, "Time (s)");
 
-    char time_label[10];
-    snprintf(time_label, 10, "%.1f", gd->max_x);
-    cairo_move_to(cr, margin_left + graph_width - 15, margin_top + graph_height + 15);
-    cairo_show_text(cr, time_label);
+    /* Quarter tick marks on time axis (0%,25%,50%,75%,100%) */
+    for (int q = 0; q <= 4; ++q) {
+        double frac = q / 4.0;
+        double tval = gd->max_x * frac;
+        double x_pos = margin_left + frac * graph_width;
+
+        /* small tick */
+        cairo_move_to(cr, x_pos, margin_top + graph_height);
+        cairo_line_to(cr, x_pos, margin_top + graph_height + 6);
+        cairo_stroke(cr);
+
+        /* label */
+        char label[32];
+        snprintf(label, sizeof(label), "%.1f", tval);
+        cairo_move_to(cr, x_pos - 10, margin_top + graph_height + 20);
+        cairo_show_text(cr, label);
+    }
     
     for (int i = 0; i < TOTAL_TRACE_COUNT; i++) {
         TraceData *trace = &gd->traces[i];
@@ -395,6 +500,7 @@ static void activate (GtkApplication* app, gpointer user_data) {
     
     srand(time(NULL));
     
+    /* primary trace */
     g_graph_data.traces[0].color = g_colors[0];
     snprintf(g_graph_data.traces[0].name, 32, "Trace 1");
     snprintf(g_graph_data.traces[0].css_class, 16, "trace-1");
@@ -469,17 +575,17 @@ static void activate (GtkApplication* app, gpointer user_data) {
     
     gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css_provider);
-
-
     /* Try to start the network client; if it fails (returns RUN_FAILURE / (pthread_t)-1)
      * fall back to the UI timer which generates simulated data. This makes the
      * network-based data collection the default behavior when available.
      */
+    
     pthread_t cli_thread = run_load_cell_cli(on_tick_timer, (void *)&g_graph_data, LC_CLI_DETACH);
     if (cli_thread == (pthread_t)-1) {
         /* network client didn't start — remain idle. Use Test Mode to simulate data when desired. */
         g_timer_source_id = 0;
     } else {
+        
         /* client is running in a background thread; no UI timer used */
         g_timer_source_id = 0;
     }
@@ -503,4 +609,3 @@ int main (int argc, char **argv) {
 
     return status;
 }
-//gcc -o test teststandui.c $(pkg-config --cflags --libs gtk+-3.0)
