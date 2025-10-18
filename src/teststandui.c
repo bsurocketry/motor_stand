@@ -152,12 +152,6 @@ static gboolean ui_timer_cb(gpointer user_data) {
     return TRUE; /* continue calling */
 }
 
-static void trace_toggle_cb(GtkToggleButton *button, gpointer user_data) {
-    TraceData *trace = (TraceData *)user_data;
-    trace->visible = gtk_toggle_button_get_active(button);
-    gtk_widget_queue_draw(g_graph_data.drawing_area); 
-}
-
 static void on_test_toggled(GtkToggleButton *button, gpointer user_data);
 
 static void on_start_stop_clicked(GtkButton *button, gpointer user_data) {
@@ -365,11 +359,9 @@ static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data
         cairo_show_text(cr, label);
     }
     
-    for (int i = 0; i < TOTAL_TRACE_COUNT; i++) {
-        TraceData *trace = &gd->traces[i];
-        if (!trace->visible || g_list_length(trace->data) == 0) {
-            continue;
-        }
+    TraceData *trace = &gd->traces[0];
+
+    if (g_list_length(trace->data) > 0) {
 
         cairo_set_source_rgba(cr, trace->color.red, trace->color.green, trace->color.blue, trace->color.alpha);
         const double line_radius = 1.0;
@@ -474,15 +466,26 @@ static GtkWidget *create_data_table(GraphData *gd) {
     gtk_container_add(GTK_CONTAINER(scrolled_window), tree_view);
     gtk_widget_set_size_request(scrolled_window, 300, -1); 
 
+    gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(tree_view), GTK_TREE_VIEW_GRID_LINES_BOTH);
+
     const char *headers[] = {"Time (s)", "Trace 1"};
     for (int i = 0; i < NUM_COLS; i++) {
         GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
-        gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(tree_view),
-                                                     -1,
-                                                     headers[i],
-                                                     renderer,
-                                                     "text", i,
-                                                     NULL);
+        
+        g_object_set(renderer, "xalign", 0.5f, NULL); 
+        
+        g_object_set(renderer, "xpad", 6, NULL); 
+
+        GtkTreeViewColumn *column = gtk_tree_view_column_new();
+        gtk_tree_view_column_set_title(column, headers[i]);
+        
+        gtk_tree_view_column_set_sizing(column, GTK_TREE_VIEW_COLUMN_FIXED);
+        gtk_tree_view_column_set_fixed_width(column, 150); 
+
+        gtk_tree_view_column_pack_start(column, renderer, TRUE);
+        gtk_tree_view_column_add_attribute(column, renderer, "text", i);
+        
+        gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), column);
     }
     
     return scrolled_window;
@@ -538,20 +541,6 @@ static void activate (GtkApplication* app, gpointer user_data) {
     GtkWidget *test_toggle = gtk_check_button_new_with_label("Test Mode");
     g_signal_connect(test_toggle, "toggled", G_CALLBACK(on_test_toggled), &g_graph_data);
     gtk_box_pack_start(GTK_BOX(hbox_controls_graph), test_toggle, FALSE, FALSE, 0);
-
-    for (int i = 0; i < TOTAL_TRACE_COUNT; i++) {
-        TraceData *trace = &g_graph_data.traces[i];
-        GtkWidget *check = gtk_check_button_new_with_label(trace->name);
-        
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), TRUE);
-        
-        GtkStyleContext *context = gtk_widget_get_style_context(check);
-        gtk_style_context_add_class(context, trace->css_class);
-
-        g_signal_connect(check, "toggled", G_CALLBACK(trace_toggle_cb), trace);
-        gtk_box_pack_start(GTK_BOX(hbox_controls_graph), check, FALSE, FALSE, 0);
-        trace->check_button = check;
-    }
     
     g_graph_data.drawing_area = gtk_drawing_area_new();
     gtk_box_pack_start(GTK_BOX(graph_area_vbox), g_graph_data.drawing_area, TRUE, TRUE, 0);
