@@ -4,7 +4,6 @@
  */
 
 #include <signal.h>
-#include "gpio_compat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -18,14 +17,11 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#include "numerical_basics.h"
+#include "method_of_least_squares.h"
 #include "load_cell.h"
-
-#define PIN_DT  23
-#define PIN_SCK 24
-
-#define GAIN_32  2
-#define GAIN_64  3
-#define GAIN_128 1
+//#include "hx711.h"
+#include "ads1115.h"
 
 static int global = 1;
 
@@ -34,46 +30,6 @@ static void handler(int signum) {
    printf("finishing...\n");
    global = 0;
 }
-
-static void reset_adc() {
-   gpioWrite(PIN_SCK,1);
-   gpioDelay(100);
-   gpioWrite(PIN_SCK,0);
-   gpioDelay(5);
-}
-
-static int pop_bit() {
-   /* toggle on, read, wait one microsecond, and toggle off */
-   gpioWrite(PIN_SCK,1);
-   gpioDelay(1);
-   gpioWrite(PIN_SCK,0);
-   int retval = gpioRead(PIN_DT);
-   return retval;
-}
-
-static long next_value(int new_gain) {
-   gpioWrite(PIN_SCK,0);
-   while (gpioRead(PIN_DT)) {
-      gpioDelay(1);
-   }
-
-   /* we have data to read! yay */
-   uint value = 0;
-   for (int i = 0; i < 24; ++i) {
-
-      value <<= 1;
-      value |= pop_bit();
-
-   }
-
-
-   for (int i = 0; i < new_gain; ++i)
-      (void)pop_bit();
-
-   //value ^= 0x800000;
-   return value;
-}
-
 
 #define CC_IS_BEST_GIRL 1
 
@@ -277,20 +233,7 @@ help_message:
    printf("got dest address as %s\n",argv[3]);
 
    /* initialize the library */
-   if (gpioInitialise() < 0) {
-      printf("failed to initialize pigpio\n");
-      exit(1);
-   }
-
-   /* initialize the gpio pins */
-   if (gpioSetMode(PIN_DT, PI_INPUT) < 0) {
-      printf("failed to initialize PIN_DT\n");
-      exit(1);
-   }
-   if (gpioSetMode(PIN_SCK, PI_OUTPUT) < 0) {
-      printf("failed to initialize PIN_SCK\n");
-      exit(1);
-   }
+   init_adc();
 
    if (calibrating) {
 
@@ -317,7 +260,7 @@ help_message:
                                        &multiplier_m,&multiplier_b);
 
       printf("got multiplier as %lf * x + %lf\n--> m = %lf\n--> b = %lf",
-             multiplier_m,multiplier_b,mutliplier_m,multiplier_b);
+             multiplier_m,multiplier_b,multiplier_m,multiplier_b);
       printf("you can save these value for reuse without calibrating via the -k option and by passing them as \"m,b\"\n");
 
 
@@ -370,6 +313,7 @@ help_message:
    printf("finishing\n");
 
    /* close the library connection */
+   close_adc();
    gpioTerminate();
    close(sock);
 

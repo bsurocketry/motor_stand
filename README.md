@@ -131,6 +131,48 @@ See the src/load_cell_logger file for an additional example.
 
 ## Hardware
 
+### ADS1115 (current)
+
+This is intended to be ran on a raspberry pi connected to the
+ADS1115 ADC. The software expects gpio 2 and 3 to be connected
+to the SDA and SCL pins on the ADS1115 respectively. The gpio
+17 is expected to be connected to the ALERT/RDY pin on the ADS1115.
+It operates with the default I2C addressing mode, so ADDR should
+be connected to GND.
+
+```
+
+ GPIO  2 ---> SDA
+ GPIO  3 ---> SCL
+ GPIO 17 ---> ALERT/RDY
+
+ OR
+ 
+ PIN  3 ---> SDA
+ PIN  5 ---> SCL
+ PIN 11 ---> ALERT/RDY
+
+```
+
+I would run this at 3.3 V power, as it accepts 2V-5V:
+
+```
+
+ PIN 1 ---> VIN
+ PIN 6 ---> GND
+
+```
+
+// TODO -> ADC connection
+
+### HX711 (outdated)
+
+As of today ``01/13/2026`` the hx711 is no longer being used in
+this program. If you would like to run with it again you will
+have to replace the ads1115 header file in the load_cell_serv.c
+file with the hx711 file and change the compilation instruction
+to include the hx711.c instead of the ads1115.c.
+
 This is intended to be ran on a raspberry pi connected to the
 HX711 ADC. The software expects gpio 23 to be connected to
 the DT pin on the ADC and gpio 24 to be connected to the
