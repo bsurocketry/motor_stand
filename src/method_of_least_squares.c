@@ -3,6 +3,7 @@
 
 #include "method_of_least_squares.h"
 #include <math.h>
+#include <stdio.h>
 
 void zero_order_least_squares_filter(double * x, double * y, size_t nmemb, double * a0) {
 
@@ -16,6 +17,41 @@ void zero_order_least_squares_filter(double * x, double * y, size_t nmemb, doubl
    }
 
    *a0 /= nmemb;
+}
+
+void stable_first_order_least_squares(double * x, double * y, size_t nmemb, double * a0, double * a1) {
+
+   mat A = DALLOCMAT(nmemb,2);
+   mat xv = DALLOCMAT(2,1);
+   mat bv = DALLOCMAT(nmemb,1);
+
+   mat At = DALLOCMAT(2,nmemb);
+   mat AAt = DALLOCMAT(nmemb,nmemb);
+   mat AAt_inv = DALLOCMAT(nmemb,nmemb);
+   mat AAt_invAt = DALLOCMAT(2,nmemb);
+
+   for (size_t i = 0; i < nmemb; ++i) {
+      A->vals[i*2] = x[i];
+      A->vals[(i*2)+1] = 1;
+      bv->vals[i] = y[i];
+   }
+
+   mattrn(A,At);
+
+printf("1\n");
+   matmul(A,At,AAt);
+
+printf("2\n");
+   matinv(AAt,AAt_inv);
+
+printf("3\n");
+   matmul(AAt_inv,At,AAt_invAt);
+
+printf("4\n");
+   matmul(AAt_invAt,bv,xv);
+
+   *a0 = xv->vals[0];
+   *a1 = xv->vals[1];
 }
 
 void first_order_least_squares_filter(double * x, double * y, size_t nmemb, double * a0, double * a1) {

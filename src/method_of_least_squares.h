@@ -29,6 +29,8 @@ void zero_order_least_squares_filter(double * x, double * y, size_t nmemb, doubl
  */
 void first_order_least_squares_filter(double * x, double * y, size_t nmemb, double * a0, double * a1);
 
+void stable_first_order_least_squares(double * x, double * y, size_t nmemb, double * a0, double * a1);
+
 /* compute the second order least squares fit of the given data. x is an array of sampling
  * times, y is an array of measurements that corresponds to each sampling time, and nmemb
  * is the number of measurements collected, the length of each array.
