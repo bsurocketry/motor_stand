@@ -50,8 +50,8 @@ int main(int argc, char ** argv) {
          data_vec = realloc(data_vec,sizeof(output_data)*data_vec_len);
       }
 
-      data_vec[data_vec_pos].collect_time = collect_time;
-      data_vec[data_vec_pos].raw_value    = raw;
+      data_vec[data_vec_pos].minimal.collect_time = collect_time;
+      data_vec[data_vec_pos].minimal.raw_value    = raw;
       data_vec[data_vec_pos].value        = value;
       data_vec[data_vec_pos].value_tare   = value_tare;
 
@@ -68,12 +68,12 @@ int main(int argc, char ** argv) {
 
    FILE * outfptr = fopen(buf,"a");
 
-   time_t collect_offset = data_vec[0].collect_time;
+   time_t collect_offset = data_vec[0].minimal.collect_time;
    fprintf(outfptr,"collect_time raw_value value tare_value\n");
    for (int i = 0; i < data_vec_pos; ++i) {
       fprintf(outfptr,"%ld\t%ld\t%lf\t%lf\n",
-              data_vec[i].collect_time - collect_offset,
-              data_vec[i].raw_value,
+              data_vec[i].minimal.collect_time - collect_offset,
+              data_vec[i].minimal.raw_value,
               data_vec[i].value,
               data_vec[i].value_tare);
    }

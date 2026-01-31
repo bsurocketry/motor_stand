@@ -14,14 +14,12 @@
 #define SHINOBU_IS_BEST_GIRL 1
 #define RUN_FAILURE ((pthread_t)-1)
 
-
 struct load_cell_cli_thread_data {
-   void (*callback)(output_data *, void *);
+   callback_func callback;
    void * uarg;
 };
 
-static void run_load_cell_cli_worker(void (*callback)(output_data *,
-                                                      void * uarg),
+static void run_load_cell_cli_worker(callback_func callback,
                                      void * uarg) {
 
    int sock = socket(AF_INET,SOCK_DGRAM,0);
@@ -47,11 +45,19 @@ static void run_load_cell_cli_worker(void (*callback)(output_data *,
       return;
    }
 
+#if FAST_AS_POSSIBLE
+   output_batch message;
+#else
    output_data message;
+#endif
    
    while (SHINOBU_IS_BEST_GIRL) {
 
+#if FAST_AS_POSSIBLE
+      recvfrom(sock,&message,sizeof(output_batch),0,NULL,NULL);
+#else
       recvfrom(sock,&message,sizeof(output_data),0,NULL,NULL);
+#endif
 
       callback(&message,uarg);
 
@@ -69,7 +75,7 @@ static void * load_cell_cli_thread_wrapper(void * arg) {
    return NULL;
 }
 
-pthread_t run_load_cell_cli(void (* callback)(output_data *, void * uarg),
+pthread_t run_load_cell_cli(callback_func callback,
                             void * uarg, lc_cli_opt behavior) {
 
    switch (behavior) {

@@ -34,8 +34,14 @@ typedef enum {
       pid : LC_CLI_DETACH called, no issues occurred
 */
 
+#if FAST_AS_POSSIBLE
+typedef void (*callback_func)(output_batch *, void *);
+#else
+typedef void (*callback_func)(output_data *, void *);
+#endif
 
-pthread_t run_load_cell_cli(void (* callback)(output_data *, void * uarg),
+
+pthread_t run_load_cell_cli(callback_func callback,
                             void * uarg, lc_cli_opt behavior);
 
 

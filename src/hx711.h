@@ -15,6 +15,8 @@
 #define GAIN_64  3
 #define GAIN_128 1
 
+/* max value we can return */
+#define ADC_MAX 0x7fffff
 
 void init_adc();
 

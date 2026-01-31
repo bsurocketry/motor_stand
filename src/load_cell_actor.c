@@ -23,6 +23,12 @@ struct average_data {
    pthread_mutex_t mux;
 };
 
+#if FAST_AS_POSSIBLE
+static void write_callback(output_batch * data, void * uarg) {
+   /* we can't tare in fast-as-possible mode, so this is a nop */ 
+   return;
+}
+#else
 static void write_callback(output_data * data, void * uarg) {
    struct average_data * avg = (struct average_data *)uarg;
    pthread_mutex_lock(&avg->mux);
@@ -35,6 +41,7 @@ static void write_callback(output_data * data, void * uarg) {
 
    pthread_mutex_unlock(&avg->mux);
 }
+#endif
 
 static void get_server_address(struct sockaddr_in * servaddr) {
 

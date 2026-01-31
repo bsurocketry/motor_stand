@@ -34,11 +34,6 @@ void init_adc() {
    reset_adc();
 }
 
-static int is_ready() {
-   int res = gpioRead(PIN_RDY);
-   return res == config.comparator_polarity;
-}
-
 /* it turns out the adc uses big endian
  * instead, at least for the config register */
 #define SWAP_BITS(x)             \
@@ -48,6 +43,17 @@ static int is_ready() {
       __temp |= (x&0x00ff)<<8;   \
       x = __temp;                \
    } while (0)
+
+static int is_ready() {
+   /*
+   int res = gpioRead(PIN_RDY);
+   return res == config.comparator_polarity;
+   */
+   /* changing this to use the high bit of conf */
+   unsigned short res = i2cReadWordData(i2c_handle,CONF_REG);
+
+   return (res>>15) != config.comparator_polarity;
+}
 
 static void set_lothresh(short val) {
    SWAP_BITS(val);
@@ -95,9 +101,11 @@ static short read_conversion() {
 
 long next_value(int new_gain) {
 
-   //while (!is_ready()) {
+   /* couldn't get this
+    * to work :(       */
+   while (!is_ready()) {
       gpioDelay(1);
-   //}
+   }
 
    int ready = is_ready();
    short val = read_conversion();

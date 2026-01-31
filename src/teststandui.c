@@ -119,6 +119,13 @@ static gboolean idle_handle_output(gpointer user_data) {
         if (io->gd->is_recording) {
             log_new_data(io->gd, io->data.value_tare);
         }
+#if FAST_AS_POSSIBLE
+#else
+static void on_tick_timer(output_data * data, gpointer user_data) {
+    GraphData *gd = (GraphData *)user_data;
+    if (!gd->is_recording) {
+       return;
+        //return G_SOURCE_CONTINUE; 
     }
     free(io);
     return G_SOURCE_REMOVE;
@@ -151,6 +158,7 @@ static gboolean ui_timer_cb(gpointer user_data) {
     log_new_data(gd, primary_val);
     return TRUE; /* continue calling */
 }
+#endif
 
 static void on_test_toggled(GtkToggleButton *button, gpointer user_data);
 

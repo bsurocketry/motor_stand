@@ -11,6 +11,9 @@
 #define GAIN_64  0
 #define GAIN_128 0
 
+/* max value we can return */
+#define ADC_MAX 0x7fff
+
 /* minimal driver for the ADS1115 */
 
 #define I2C_ADDR  0x48

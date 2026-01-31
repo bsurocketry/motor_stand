@@ -12,6 +12,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -20,8 +21,7 @@
 #include "numerical_basics.h"
 #include "method_of_least_squares.h"
 #include "load_cell.h"
-//#include "hx711.h"
-#include "ads1115.h"
+#include "adc.h"
 
 static int global = 1;
 
@@ -127,23 +127,41 @@ static void * run_auxillary_server(void * arg) {
    return NULL;
 }
 
+static void push_batch(output_minimal * entry, output_batch * batch,
+                       int sock, struct sockaddr_in * dest_addr) {
+   batch->data[batch->count] = *entry;
+
+   batch->count += 1;
+   if (batch->count == BATCH_SIZE) {
+      sendto(sock,batch,sizeof(output_batch),0,
+             (struct sockaddr *)dest_addr,sizeof(struct sockaddr_in));
+
+      /* reset for next time */
+      batch->count = 0;
+   }
+}
+
 int main(int argc, char ** argv) {
 
-   if (argc != 4) {
+   if (argc > 6) {
 help_message:
-      printf("usage:\n%s [-c | -k] <known_weight/multiplier - float> <dest address>\n"
+      printf("usage:\n%s [-c | -k] <known_weight/multiplier - float> <dest address> { -w <filename> }\n"
              "options:\n"
              "\t-c : calibrate the sensor, value passed is the known weight to use for calibration\n"
              "\t-k : the multiplier is known, the value passed is the multiplier for the sensor\n"
+             "\t-w : also perform direct writethrough of the collected data to disk. Accepts a filename.\n"
              "arguments:\n"
              "\tknown_weight/multiplier : a list of values. If the c option is pased these values will be used\n"
-             "                            to perform a first order least squares calibration. The values should\n"
-             "                            be passed as a comma seperated list in quotes, i.e. \"1,2,3,4,5\"\n"
-             "                            If the k option is passed these values will be used as the first and\n"
-             "                            zeroth term in the least squares fit, i.e. in the equation mx + b the\n"
-             "                            values should be passed in the form \"m,b\".\n"
+             "\t                          to perform a first order least squares calibration. The values should\n"
+             "\t                          be passed as a comma seperated list in quotes, i.e. \"1,2,3,4,5\"\n"
+             "\t                          If the k option is passed these values will be used as the first and\n"
+             "\t                          zeroth term in the least squares fit, i.e. in the equation mx + b the\n"
+             "\t                          values should be passed in the form \"m,b\".\n"
              "\tdest address            : the address to send UDP data packets to. The output socket is set\n"
-             "\t                          to enable broadcast, so you may pass a broadcast address as well\n",
+             "\t                          to enable broadcast, so you may pass a broadcast address as well\n"
+             "\tfilename                : the file to save data to when the -w (writethough) flag is set. This\n"
+             "\t                          file will be written in the current directory, so ensure you have the\n"
+             "\t                          appropriate write access.\n",
              argv[0]);
       exit(1);
    }
@@ -179,8 +197,8 @@ help_message:
       calibrating = 1;
 
       char * pos = argv[2];
-      int value_count = 0;
-      known_weights = malloc(sizeof(double) * 2);
+      value_count = 0;
+      known_weights = malloc(sizeof(double) * 80);
 
       do {
 
@@ -190,8 +208,10 @@ help_message:
           * need to worry about seeing the same power of two
           * twice.                                           */
 
+/*
          if (__builtin_popcount(value_count) == 1)
             known_weights = realloc(known_weights,value_count * 2);
+            */
 
          known_weights[value_count] = strtod(pos + 1,&pos);
          value_count += 1;
@@ -216,7 +236,7 @@ help_message:
       goto help_message;
    }
    else {
-      printf("unknown argument given: %s\nplease provide one of: [ -c | -k | -h ]\n",argv[1]);
+      printf("unknown argument given: %s\nplease provide one of: [ -c | -k | -h | -w ]\n",argv[1]);
       exit(1);
    }
 
@@ -231,6 +251,42 @@ help_message:
    }
 
    printf("got dest address as %s\n",argv[3]);
+
+   int writethrough = 0; /* unset - not stdout... */
+   if (argc > 4) {
+      if (strcmp("-w",argv[4]) == 0) {
+         if (! (argc > 5)) {
+            printf("expected filename after -w flag\n");
+            exit(1);
+         }
+         char * filename = argv[5];
+
+         /* open the file */
+         if ( (writethrough = open(filename,O_CREAT|O_WRONLY|O_APPEND,S_IRWXU)) < 0) {
+            printf("failed opening file %s\n",filename);
+            perror("open");
+            exit(1);
+         }
+
+         /* write a signal section into the file to signal
+          * that a new write session has started. This will
+          * be useful for resyncing if data is lost when the
+          * system shuts off or is otherwise corrupted somehow
+          */
+          output_data start_flag;
+          memset(&start_flag,0xff,sizeof(output_data));
+          if ( (write(writethrough,&start_flag,sizeof(output_data))) != sizeof(output_data)) {
+             printf("failed to write start sequence properly, exiting\n");
+             perror("write");
+             exit(1);
+          }
+      }
+      else {
+         printf("expected flag -w as fourth argument\n");
+         printf("got: %s\n",argv[4]);
+         exit(1);
+      }
+   }
 
    /* initialize the library */
    init_adc();
@@ -278,26 +334,42 @@ help_message:
    printf("sending data...\n");
 
    struct timespec time;
+#if FAST_AS_POSSIBLE
+   output_batch batch;
+   memset(&batch,0,sizeof(output_batch));
+#endif
 
    long prev_raw = 0;
    /* main program loop */
    while (global) {
 
       long next_raw = next_value(GAIN_128);
-      double next = (double)((double)next_raw / (double)0xffffff) * multiplier_m + multiplier_b;
+      double next = (double)((double)next_raw / (double)ADC_MAX) * multiplier_m + multiplier_b;
       clock_gettime(CLOCK_MONOTONIC,&time);
       //clock_gettime(CLOCK_MONOTONIC_COARSE,&time);
       long microseconds = (time.tv_sec * 1000000) + (time.tv_nsec / 1000);
 
-      output_data o = {.collect_time_sec = time.tv_sec,
+      output_data o = {.minimal.collect_time = microseconds,
+                       .minimal.raw_value = next_raw, 
+                       .collect_time_sec = time.tv_sec,
                        .collect_time_nsec = time.tv_nsec,
-                       .collect_time = microseconds,
-                       .raw_value = next_raw, 
                        .value = next,
                        .value_tare = next - atomic_load(&tare)};
 
+#if FAST_AS_POSSIBLE
+      push_batch(&o.minimal,&batch,sock,&dest_addr);
+#else
       sendto(sock,&o,sizeof(output_data),0,
              (struct sockaddr *)&dest_addr,sizeof(struct sockaddr_in));
+#endif
+
+      if (writethrough) {
+#if FAST_AS_POSSIBLE
+         write(writethrough,&o.minimal,sizeof(output_minimal));
+#else
+         write(writethrough,&o,sizeof(output_data));
+#endif
+      }
 
       if (atomic_load(&reset)) {
 
@@ -310,12 +382,16 @@ help_message:
       }
    }
 
-   printf("finishing\n");
+   printf("main: finishing...\n");
 
-   /* close the library connection */
+   /* close everything */
+   if (writethrough)
+      close(writethrough);
    close_adc();
    gpioTerminate();
    close(sock);
+
+   printf("finished\n");
 
    return 0;
 }
